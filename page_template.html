@@ -21,9 +21,9 @@
   header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
   h1 { margin: 0; font-size: 18px; }
   .panel { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 0; box-sizing: border-box; }
-  form { display: grid; gap: 10px; align-content: start; overflow-y: auto; }
+  form { display: grid; gap: 8px; align-content: start; overflow-y: auto; }
   #fields { display: grid; gap: 10px; }
-  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 5px; }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 3px; }
   legend { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-bottom: 3px; }
   label { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 0 8px; align-items: center; font-size: 12px; font-weight: 600; }
   label small { grid-column: 1; color: var(--muted); font-weight: 400; font-size: 11px; line-height: 1.2; }
@@ -74,7 +74,7 @@
   <div class="side">
     <section class="panel" id="guide">
       <h2>How to read the charts</h2>
-      {{GUIDE}}
+      <div id="guideBody">{{GUIDE}}</div>
     </section>
     <section class="panel">
       <h2>Output of the last run</h2>
@@ -174,6 +174,8 @@ async function run() {
     const t0 = performance.now();
     await py.runPythonAsync(SOURCE, { globals: ns });
     await draw(JSON.parse(ns.get("fig").to_json()));
+    // A script may change its explanation with the settings (GUIDE)
+    if (ns.has("GUIDE")) $("guideBody").innerHTML = ns.get("GUIDE");
     $("log").textContent = out;
     setStatus(`Done in ${((performance.now() - t0) / 1000).toFixed(1)} s.`);
   } catch (e) {
