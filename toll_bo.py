@@ -33,63 +33,211 @@ tau_star = TAU_MAX / 2
 print(f"Exact solution: tau* = {tau_star:.2f}, R* = {revenue(tau_star):.1f}")
 
 
+# ======================================================================
+# PART 2: The Gaussian Process (GP)
+# ======================================================================
+# A GP is a probability distribution over functions. Given a few observed
+# points (toll, revenue), it answers for ANY toll tau:
+#     "My best guess for R(tau) is `mean`, and I am uncertain by `std`."
+# Close to observed points the std is small; far from them it is large.
+#
+# Two ingredients define a GP:
+#   1. A kernel: says how strongly the revenue at two tolls is related.
+#   2. The data: the (toll, revenue) pairs evaluated so far.
 # ----------------------------------------------------------------------
-# 2. Gaussian Process (RBF kernel), from scratch
-# ----------------------------------------------------------------------
+ 
 def rbf(a, b, length, sigma_f):
-    d2 = (a[:, None] - b[None, :]) ** 2
-    return sigma_f**2 * np.exp(-0.5 * d2 / length**2)
-
-
+    """RBF (squared-exponential) kernel: similarity between two sets of tolls.
+ 
+    For every pair (a_i, b_j) it returns
+        k(a_i, b_j) = sigma_f^2 * exp( -(a_i - b_j)^2 / (2 * length^2) )
+ 
+    Interpretation:
+      * Equal tolls (a_i == b_j)  ->  k = sigma_f^2, the maximum: the two
+        revenues are perfectly correlated (they are the same quantity).
+      * Tolls close together      ->  k close to sigma_f^2: similar revenue.
+      * Tolls far apart           ->  k close to 0: knowing one tells you
+        almost nothing about the other.
+ 
+    Parameters
+    ----------
+    a, b    : 1-D arrays of tolls (lengths n and m)
+    length  : length-scale. How far apart two tolls can be and still be
+              "related". Small = wiggly functions, large = smooth ones.
+    sigma_f : prior standard deviation (vertical scale) of the function.
+ 
+    Returns
+    -------
+    (n, m) matrix whose entry (i, j) is k(a_i, b_j).
+    """
+    # a[:, None] has shape (n, 1) and b[None, :] has shape (1, m).
+    # Subtracting broadcasts to an (n, m) matrix of all pairwise differences.
+    squared_distance = (a[:, None] - b[None, :]) ** 2
+    return sigma_f**2 * np.exp(-0.5 * squared_distance / length**2)
+ 
+ 
 def gp_posterior(x_train, y_train, x_test, length=2.0, sigma_f=1.0, noise=1e-6):
-    """Posterior mean and std at x_test (targets are standardised internally)."""
-    mu_y, sd_y = y_train.mean(), y_train.std() + 1e-12
-    y = (y_train - mu_y) / sd_y
-
+    """Predict the revenue at new tolls `x_test` from the evaluations so far.
+ 
+    This is the GP "posterior": the prior (kernel) updated with the data.
+    The formulas, with K = kernel matrix of the training tolls,
+    k* = kernel between training tolls and a test toll, y = training revenues:
+ 
+        mean(x*) = k*^T  K^-1  y
+        var(x*)  = k(x*, x*) - k*^T  K^-1  k*
+ 
+    Reading the formulas:
+      * mean: a weighted sum of the observed revenues. Observations at tolls
+        close to x* get the biggest weights (that is what k* encodes).
+      * var : starts at the prior uncertainty k(x*, x*) = sigma_f^2 and
+        SHRINKS by an amount that depends on how much the data tells us
+        about x*.  Near data -> large reduction -> small uncertainty.
+ 
+    Parameters
+    ----------
+    x_train : tolls evaluated so far, shape (n,)
+    y_train : revenues observed at those tolls, shape (n,)
+    x_test  : tolls at which we want a prediction, shape (m,)
+    length, sigma_f : kernel hyperparameters (see `rbf`). Fixed here;
+              a full implementation would fit them to the data.
+    noise   : tiny value added to the diagonal of K. It (a) models
+              measurement noise (almost none here) and (b) keeps K
+              invertible numerically.
+ 
+    Returns
+    -------
+    mean, std : arrays of shape (m,), the prediction and its uncertainty
+                at every test toll, in the original revenue units.
+    """
+    # --- Step 1: standardise the revenues --------------------------------
+    # The kernel assumes a function with typical size ~ sigma_f = 1, but
+    # revenues are in the thousands. Rescaling y to zero mean / unit spread
+    # makes sigma_f = 1 a sensible choice. We undo this at the very end.
+    y_mean = y_train.mean()
+    y_std = y_train.std() + 1e-12          # +1e-12 avoids dividing by zero
+    y = (y_train - y_mean) / y_std
+ 
+    # --- Step 2: build the kernel matrices -------------------------------
+    # K  : (n, n) similarity between all pairs of evaluated tolls
+    # Ks : (n, m) similarity between evaluated tolls and test tolls (= k*)
     K = rbf(x_train, x_train, length, sigma_f) + noise * np.eye(len(x_train))
     Ks = rbf(x_train, x_test, length, sigma_f)
-    Kss_diag = sigma_f**2 * np.ones(len(x_test))
-
+ 
+    # --- Step 3: solve K^-1 y without explicitly inverting K -------------
+    # Cholesky: K = L L^T with L lower-triangular. Two cheap triangular
+    # solves then give alpha = K^-1 y. This is faster and numerically more
+    # stable than np.linalg.inv(K).
     L = np.linalg.cholesky(K)
     alpha = np.linalg.solve(L.T, np.linalg.solve(L, y))
+ 
+    # --- Step 4: posterior mean = k*^T K^-1 y ----------------------------
     mean = Ks.T @ alpha
+ 
+    # --- Step 5: posterior variance = k(x*,x*) - k*^T K^-1 k* ------------
+    # With v = L^-1 k*, we have k*^T K^-1 k* = v^T v, so the second term is
+    # the column-wise sum of squares of v.
+    prior_var = sigma_f**2 * np.ones(len(x_test))   # k(x*, x*) = sigma_f^2
     v = np.linalg.solve(L, Ks)
-    var = np.clip(Kss_diag - np.sum(v**2, axis=0), 1e-12, None)
-
-    return mean * sd_y + mu_y, np.sqrt(var) * sd_y
-
-
+    var = prior_var - np.sum(v**2, axis=0)
+    var = np.clip(var, 1e-12, None)   # rounding can give tiny negatives
+ 
+    # --- Step 6: undo the standardisation --------------------------------
+    return mean * y_std + y_mean, np.sqrt(var) * y_std
+ 
+ 
+# ======================================================================
+# PART 3: Bayesian Optimisation
+# ======================================================================
+# The GP tells us what we believe about R(tau) everywhere. The question now:
+# WHERE should we spend our next expensive evaluation?
+#
+# Two competing wishes:
+#   * EXPLOITATION: go where the GP predicts a high revenue.
+#   * EXPLORATION : go where the GP is very uncertain; the revenue there
+#                   might be surprisingly high.
+# An "acquisition function" scores every candidate toll by balancing both.
+# We use Expected Improvement (EI).
+# ----------------------------------------------------------------------
+ 
 def expected_improvement(mean, std, best, xi=0.01):
-    """EI for maximisation."""
+    """Expected Improvement (EI) for MAXIMISATION.
+ 
+    For a candidate toll the GP says R ~ Normal(mean, std^2). EI is the
+    expected amount by which R beats the best revenue seen so far
+    (`best`), counting only improvements (a worse result is worth 0, not
+    negative, because we keep the best point anyway).
+ 
+    Closed form, with z = (mean - best - xi) / std:
+ 
+        EI = (mean - best - xi) * Phi(z)  +  std * phi(z)
+             \\_________ exploitation __/    \\__ exploration __/
+ 
+    where Phi and phi are the standard normal CDF and density.
+      * First term: large when the predicted mean already beats `best`.
+      * Second term: large when `std` is large (uncertain = possible upside).
+ 
+    Parameters
+    ----------
+    mean, std : GP prediction at the candidate tolls (arrays)
+    best      : highest revenue observed so far (a number)
+    xi        : small margin; an improvement must exceed `best` by about xi
+                to count. Discourages pointless tiny refinements.
+ 
+    Returns
+    -------
+    EI at every candidate toll (array). Higher = more worth evaluating.
+    """
     z = (mean - best - xi) / std
     return (mean - best - xi) * norm.cdf(z) + std * norm.pdf(z)
-
-
-# ----------------------------------------------------------------------
-# 3. Bayesian Optimisation loop
-# ----------------------------------------------------------------------
-grid = np.linspace(0, TAU_MAX, 501)           # candidate tolls
-x_obs = np.array([1.0, 4.0, 8.0])             # initial evaluations
-y_obs = revenue(x_obs)
-N_ITER = 6
-
-snapshots = []
+ 
+ 
+# --- Setup of the optimisation -----------------------------------------
+# Candidate tolls: the GP and EI are cheap, so we can simply check a fine
+# grid of 501 tolls between 0 and TAU_MAX and pick the best one.
+grid = np.linspace(0, TAU_MAX, 501)
+ 
+# Initial design: BO needs a few evaluations to start. These 3 spread-out
+# tolls are the only "free" information; every later one is chosen by EI.
+x_obs = np.array([1.0, 4.0, 8.0])     # tolls evaluated so far
+y_obs = revenue(x_obs)                # their revenues (3 expensive calls)
+N_ITER = 6                            # number of BO iterations
+ 
+snapshots = []   # store each iteration's state, only used for plotting
+ 
+# --- The BO loop ---------------------------------------------------------
 for it in range(N_ITER):
+    # (a) Fit the GP to all data so far and predict on the whole grid.
+    #     Cheap: only linear algebra on a tiny matrix.
     mean, std = gp_posterior(x_obs, y_obs, grid)
+ 
+    # (b) Score every candidate toll with EI, relative to the best
+    #     revenue observed so far.
     ei = expected_improvement(mean, std, y_obs.max())
+ 
+    # (c) Pick the toll with the highest EI: the most promising place
+    #     to spend one expensive evaluation.
     x_next = grid[np.argmax(ei)]
+ 
     snapshots.append((x_obs.copy(), y_obs.copy(), mean, std, ei, x_next))
-
     print(f"iter {it}: evaluate tau = {x_next:.2f}  "
-          f"(best so far: tau = {x_obs[np.argmax(y_obs)]:.2f}, R = {y_obs.max():.1f})")
-
-    x_obs = np.append(x_obs, x_next)           # one "expensive" evaluation
+          f"(best so far: tau = {x_obs[np.argmax(y_obs)]:.2f}, "
+          f"R = {y_obs.max():.1f})")
+ 
+    # (d) Evaluate the real, expensive model at x_next (the ONLY expensive
+    #     call per iteration) and add the result to the data.
+    x_obs = np.append(x_obs, x_next)
     y_obs = np.append(y_obs, revenue(x_next))
-
+    # Back to (a): the GP now includes this new information.
+ 
+# --- Result ----------------------------------------------------------------
 best = np.argmax(y_obs)
 print(f"\nBO result: tau = {x_obs[best]:.3f}, R = {y_obs[best]:.1f} "
       f"after {len(x_obs)} evaluations")
 print(f"Exact:     tau = {tau_star:.3f}, R = {revenue(tau_star):.1f}")
+ 
+# Why does it stop making progress? Once a point near the optimum is known,
+# the GP is confident nearby and EI is tiny everywhere, so argmax keeps
+# returning (almost) the same toll. Repeated picks signal convergence.
 
 # ----------------------------------------------------------------------
 # 4. Plot: GP fit and EI at first, middle and last iteration
