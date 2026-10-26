@@ -4,16 +4,40 @@ Single road, single toll operator: revenue maximisation.
 Part 1: exact solution (very doable by hand on paper as well)
 Part 2: Bayesian Optimisation with a hand-written Gaussian Process
 """
+import sys
+
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from scipy.stats import norm
+
+# ----------------------------------------------------------------------
+# 0. Parameters
+# ----------------------------------------------------------------------
+# Run locally, these defaults apply. The web page toll_bo.html runs this
+# same file in the browser (Pyodide, no server) and passes its form values
+# in WEB_PARAMS, which override the defaults.
+IN_BROWSER = sys.platform == "emscripten"
+P = dict(N=1000, TAU_MAX=10.0, X_INIT=[1.0, 4.0, 8.0], N_ITER=6,
+         LENGTH=2.0, SIGMA_F=1.0, XI=0.01)
+P.update(globals().get("WEB_PARAMS", {}))
+P["N_ITER"] = int(P["N_ITER"])
+if len(set(P["X_INIT"])) < 2 or not all(0 <= x <= P["TAU_MAX"] for x in P["X_INIT"]):
+    raise ValueError("X_INIT needs at least two different tolls between 0 and TAU_MAX.")
+
+# Labels for the web page form: name -> (group, short description)
+HELP = dict(N=("Expensive model", "drivers at τ = 0"),
+            TAU_MAX=("Expensive model", "toll at which nobody drives"),
+            X_INIT=("Bayesian Optimisation", "initial tolls"),
+            N_ITER=("Bayesian Optimisation", "number of BO iterations"),
+            LENGTH=("Bayesian Optimisation", "GP length-scale ℓ"),
+            SIGMA_F=("Bayesian Optimisation", "GP prior std (standardised)"),
+            XI=("Bayesian Optimisation", "EI margin ξ (revenue units)"))
 
 # ----------------------------------------------------------------------
 # 1. The "expensive model" (here cheap, but we treat it as a black box)
 # ----------------------------------------------------------------------
-N, TAU_MAX = 1000, 10.0
+N, TAU_MAX = P["N"], P["TAU_MAX"]
 #tau = toll level
 #N = total amount of travelers (if tau = 0)
 #TAU_MAX = toll level for which no travelers use the road
@@ -198,21 +222,24 @@ grid = np.linspace(0, TAU_MAX, 501)
  
 # Initial design: BO needs a few evaluations to start. These 3 spread-out
 # tolls are the only "free" information; every later one is chosen by EI.
-x_obs = np.array([1.0, 4.0, 8.0])     # tolls evaluated so far
+x_obs = np.array(P["X_INIT"], dtype=float)   # tolls evaluated so far
 y_obs = revenue(x_obs)                # their revenues (3 expensive calls)
-N_ITER = 6                            # number of BO iterations
- 
+N_ITER = P["N_ITER"]                  # number of BO iterations
+
+# GP and EI settings (see `rbf`, `gp_posterior` and `expected_improvement`)
+LENGTH, SIGMA_F, XI = P["LENGTH"], P["SIGMA_F"], P["XI"]
+
 snapshots = []   # store each iteration's state, only used for plotting
  
 # --- The BO loop ---------------------------------------------------------
 for it in range(N_ITER):
     # (a) Fit the GP to all data so far and predict on the whole grid.
     #     Cheap: only linear algebra on a tiny matrix.
-    mean, std = gp_posterior(x_obs, y_obs, grid)
- 
+    mean, std = gp_posterior(x_obs, y_obs, grid, LENGTH, SIGMA_F)
+
     # (b) Score every candidate toll with EI, relative to the best
     #     revenue observed so far.
-    ei = expected_improvement(mean, std, y_obs.max())
+    ei = expected_improvement(mean, std, y_obs.max(), XI)
  
     # (c) Pick the toll with the highest EI: the most promising place
     #     to spend one expensive evaluation.
@@ -242,23 +269,143 @@ print(f"Exact:     tau = {tau_star:.3f}, R = {revenue(tau_star):.1f}")
 # ----------------------------------------------------------------------
 # 4. Plot: GP fit and EI at first, middle and last iteration
 # ----------------------------------------------------------------------
-picks = [0, N_ITER // 2, N_ITER - 1]
-fig, axes = plt.subplots(2, 3, figsize=(14, 6), sharex=True,
-                         gridspec_kw={"height_ratios": [3, 1]})
-for col, k in enumerate(picks):
-    xo, yo, m, s, ei, xn = snapshots[k]
-    ax, ax_ei = axes[0, col], axes[1, col]
-    ax.plot(grid, revenue(grid), "k--", label="true R(τ)")
-    ax.plot(grid, m, "C0", label="GP mean")
-    ax.fill_between(grid, m - 2 * s, m + 2 * s, color="C0", alpha=0.2, label="±2σ")
-    ax.scatter(xo, yo, c="C3", zorder=5, label="evaluations")
-    ax.axvline(xn, color="C2", ls=":", label="next τ")
-    ax.set_title(f"After {len(xo)} evaluations")
-    ax_ei.plot(grid, ei, "C2")
-    ax_ei.set_xlabel("toll τ")
-    if col == 0:
-        ax.set_ylabel("revenue")
-        ax_ei.set_ylabel("EI")
-        ax.legend(fontsize=8, loc="lower center")
-plt.tight_layout()
-plt.savefig("toll_bo.png", dpi=130)
+# Skipped in the browser: the web page only needs the interactive figure.
+if not IN_BROWSER:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    picks = [0, N_ITER // 2, N_ITER - 1]
+    fig, axes = plt.subplots(2, 3, figsize=(14, 6), sharex=True,
+                             gridspec_kw={"height_ratios": [3, 1]})
+    for col, k in enumerate(picks):
+        xo, yo, m, s, ei, xn = snapshots[k]
+        ax, ax_ei = axes[0, col], axes[1, col]
+        ax.plot(grid, revenue(grid), "k--", label="true R(τ)")
+        ax.plot(grid, m, "C0", label="GP mean")
+        ax.fill_between(grid, m - 2 * s, m + 2 * s, color="C0", alpha=0.2, label="±2σ")
+        ax.scatter(xo, yo, c="C3", zorder=5, label="evaluations")
+        ax.axvline(xn, color="C2", ls=":", label="next τ")
+        ax.set_title(f"After {len(xo)} evaluations")
+        ax_ei.plot(grid, ei, "C2")
+        ax_ei.set_xlabel("toll τ")
+        if col == 0:
+            ax.set_ylabel("revenue")
+            ax_ei.set_ylabel("EI")
+            ax.legend(fontsize=8, loc="lower center")
+    plt.tight_layout()
+    plt.savefig("toll_bo.png", dpi=130)
+
+# ----------------------------------------------------------------------
+# 5. Interactive one-pager: step through every iteration with a slider
+# ----------------------------------------------------------------------
+# Add the final state (after the last evaluation) so the slider ends on
+# the result. `None` = no next toll is chosen any more.
+mean, std = gp_posterior(x_obs, y_obs, grid, LENGTH, SIGMA_F)
+states = snapshots + [(x_obs, y_obs, mean, std,
+                       expected_improvement(mean, std, y_obs.max(), XI), None)]
+R_STAR = revenue(tau_star)
+Y_LINE = [-0.4 * R_STAR, 1.4 * R_STAR]   # revenue axis, also the "next tau" line
+
+
+def frame_data(state):
+    """All traces for one iteration, in a fixed order (plotly needs that)."""
+    xo, yo, m, s, ei, xn = state
+    n = np.arange(1, len(xo) + 1)
+    gap = np.maximum(R_STAR - yo, 1e-2)           # log scale: floor at 0.01
+    best_gap = np.maximum(R_STAR - np.maximum.accumulate(yo), 1e-2)
+    next_x = [xn, xn] if xn is not None else []
+    return [
+        # row 1: GP fit
+        go.Scatter(x=np.r_[grid, grid[::-1]], y=np.r_[m + 2 * s, (m - 2 * s)[::-1]],
+                   fill="toself", fillcolor="rgba(31,119,180,0.2)",
+                   line=dict(width=0), name="±2σ", hoverinfo="skip"),
+        go.Scatter(x=grid, y=revenue(grid), name="true R(τ)",
+                   line=dict(color="black", dash="dash")),
+        go.Scatter(x=grid, y=m, name="GP mean", line=dict(color="#1f77b4", width=2.5)),
+        go.Scatter(x=xo, y=yo, mode="markers+text", text=[str(i) for i in n],
+                   textposition="top center", name="evaluations",
+                   marker=dict(color="#d62728", size=9)),
+        go.Scatter(x=next_x, y=Y_LINE if next_x else [], mode="lines", name="next τ",
+                   line=dict(color="#2ca02c", dash="dot", width=2)),
+        # row 2: Expected Improvement
+        go.Scatter(x=grid, y=ei, fill="tozeroy", name="EI", showlegend=False,
+                   line=dict(color="#2ca02c"), xaxis="x2", yaxis="y2"),
+        # row 3: convergence
+        go.Scatter(x=n, y=gap, mode="markers", name="gap per evaluation",
+                   marker=dict(color="#d62728", size=8), xaxis="x3", yaxis="y3"),
+        go.Scatter(x=n, y=best_gap, mode="lines", line=dict(shape="hv", color="#1f77b4"),
+                   name="gap of best so far", xaxis="x3", yaxis="y3"),
+    ]
+
+
+def frame_title(k, state):
+    xo, yo, m, s, ei, xn = state
+    head = (f"<b>Step {k}</b>: {len(xo)} evaluations, best τ = {xo[np.argmax(yo)]:.2f}, "
+            f"R = {yo.max():.1f}")
+    if xn is None:
+        return head + "  (finished)"
+    # Split EI at the chosen toll into its two terms (see expected_improvement)
+    i = np.argmax(ei)
+    z = (m[i] - yo.max() - XI) / s[i]
+    exploit = (m[i] - yo.max() - XI) * norm.cdf(z)
+    explore = s[i] * norm.pdf(z)
+    return (head + f"<br>next τ = {xn:.2f}: EI = {ei[i]:.3g} "
+            f"= exploitation {exploit:.3g} + exploration {explore:.3g}")
+
+
+fig = make_subplots(rows=3, cols=1, row_heights=[0.5, 0.22, 0.28], vertical_spacing=0.07,
+                    subplot_titles=("GP fit of revenue R against toll τ",
+                                    "Expected Improvement against toll τ",
+                                    "Convergence: R* − R (log scale)"))
+for trace, row in zip(frame_data(states[0]), [1, 1, 1, 1, 1, 2, 3, 3]):
+    fig.add_trace(trace, row=row, col=1)
+
+fig.frames = [
+    go.Frame(name=str(k), data=frame_data(st),
+             layout=dict(title_text=frame_title(k, st),
+                         yaxis2=dict(range=[0, 1.1 * st[4].max()])))
+    for k, st in enumerate(states)
+]
+
+fig.update_xaxes(range=[0, TAU_MAX], row=1, col=1)
+fig.update_xaxes(range=[0, TAU_MAX], row=2, col=1)
+fig.update_xaxes(range=[0.5, len(x_obs) + 0.5], dtick=1, title_text="evaluation #",
+                 title_standoff=2, row=3, col=1)
+fig.update_yaxes(range=Y_LINE, title_text="revenue", row=1, col=1)
+fig.update_yaxes(range=[0, 1.1 * states[0][4].max()], title_text="EI", row=2, col=1)
+fig.update_yaxes(type="log", range=[-2.2, np.log10(R_STAR) + 0.3], title_text="gap", row=3, col=1)
+
+step_args = dict(frame=dict(duration=0, redraw=True), mode="immediate")
+fig.update_layout(
+    # No fixed height: the web page sizes the figure to fit the screen
+    title=dict(text=frame_title(0, states[0]), font=dict(size=14), x=0.06, y=0.985),
+    template="plotly_white", margin=dict(t=62, b=105, l=60, r=10),
+    # Iteration controls get their own band below the last chart
+    updatemenus=[dict(type="buttons", x=0, y=-0.115, xanchor="left", yanchor="top",
+                      direction="left", pad=dict(t=0, r=10),
+                      buttons=[dict(label="▶ Play", method="animate",
+                                    args=[None, dict(frame=dict(duration=1200, redraw=True),
+                                                     fromcurrent=True)]),
+                               dict(label="❚❚ Pause", method="animate",
+                                    args=[[None], step_args])])],
+    sliders=[dict(x=0.24, y=-0.075, len=0.76, yanchor="top", pad=dict(t=0, b=0),
+                  currentvalue=dict(prefix="BO iteration: ", font=dict(size=14)),
+                  steps=[dict(label=str(k), method="animate", args=[[str(k)], step_args])
+                         for k in range(len(states))])],
+)
+
+# ----------------------------------------------------------------------
+# 6. Web page: toll_bo.html, built around this file's own source
+# ----------------------------------------------------------------------
+# The page shows the figure above straight away, and its "Run" button
+# re-runs THIS file in the browser (Pyodide) with the parameters from the
+# form. In the browser `fig` is read back by the page instead.
+if not IN_BROWSER:
+    from webpage import write_page
+    write_page(__file__, "toll_bo.html",
+               title="Bayesian Optimisation of a single toll",
+               intro="Press <b>Run</b> to re-run <code>toll_bo.py</code> in your browser "
+                     "(Pyodide, no server). Drag the slider under the charts to step "
+                     "through the iterations.",
+               params=P, param_help=HELP, fig=fig)

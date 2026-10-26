@@ -1,0 +1,195 @@
+<!doctype html>
+<!--
+  Page template shared by toll_bo.py and toll_bes.py. Do not open this file
+  directly: running a script fills in the {{...}} placeholders (see
+  webpage.py) with its own source code, parameters and first figure.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<script src="https://cdn.plot.ly/plotly-{{PLOTLYJS_VERSION}}.min.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.js"></script>
+<style>
+  :root { --ink: #1b2430; --muted: #5d6b78; --line: #d9e0e6; --bg: #f4f6f8; --accent: #1f77b4; --err: #c0392b; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  /* One screen: header on top, then parameters | figure | run log */
+  .app { height: 100%; box-sizing: border-box; padding: 10px 12px; display: grid; gap: 10px;
+         grid-template-columns: 270px minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr); }
+  header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 18px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  code { font: 12px ui-monospace, Menlo, Consolas, monospace; }
+  .panel { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 0; box-sizing: border-box; }
+  form { display: grid; gap: 10px; align-content: start; overflow-y: auto; }
+  #fields { display: grid; gap: 10px; }
+  fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 5px; }
+  legend { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-bottom: 3px; }
+  label { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 0 8px; align-items: center; font-size: 12px; font-weight: 600; }
+  label small { grid-column: 1; color: var(--muted); font-weight: 400; font-size: 11px; line-height: 1.2; }
+  label input { grid-column: 2; grid-row: 1 / span 2; }
+  input { font: 13px ui-monospace, Menlo, Consolas, monospace; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; min-width: 0; }
+  .buttons { display: flex; gap: 8px; }
+  button { font: 600 14px system-ui, sans-serif; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  button.run { background: var(--accent); border-color: var(--accent); color: #fff; flex: 1; }
+  button:disabled { opacity: 0.55; cursor: wait; }
+  #status { font-size: 12px; color: var(--muted); min-height: 1.4em; }
+  #status.err { color: var(--err); }
+  #plot { padding: 4px; overflow: hidden; }
+  .side { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; min-height: 0; }
+  .side .panel { display: flex; flex-direction: column; }
+  h2, summary { font-size: 13px; font-weight: 600; margin: 0; }
+  summary { cursor: pointer; }
+  pre { margin: 6px 0 0; font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow: auto; min-height: 0; }
+  #log { flex: 1; }
+  #source { max-height: 38vh; }
+  /* Too small for one screen: fall back to a normal scrolling page */
+  @media (max-width: 1100px), (max-height: 600px) {
+    .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+    #plot { height: 900px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>{{TITLE}}</h1>
+    <p>{{INTRO}}</p>
+  </header>
+
+  <form id="form" class="panel" novalidate>
+    <div id="fields"></div>
+    <div class="buttons">
+      <button type="submit" class="run" id="runBtn">Run</button>
+      <button type="button" id="resetBtn">Defaults</button>
+    </div>
+    <div id="status" role="status"></div>
+  </form>
+
+  <div id="plot" class="panel"></div>
+
+  <div class="side">
+    <section class="panel">
+      <h2>Output of the last run</h2>
+      <pre id="log">The run log appears here once Python has loaded (about 5 to 30 seconds) and the default run has finished.</pre>
+    </section>
+    <details class="panel">
+      <summary>Source code that runs</summary>
+      <pre id="source"></pre>
+    </details>
+  </div>
+</div>
+
+<script>
+const SOURCE = {{SOURCE}};
+const DEFAULTS = {{PARAMS}};
+const HELP = {{HELP}};
+const INITIAL_FIGURE = {{FIGURE}};
+
+const $ = (id) => document.getElementById(id);
+const setStatus = (msg, isErr = false) => { $("status").textContent = msg; $("status").className = isErr ? "err" : ""; };
+
+async function draw(fig) {
+  Plotly.purge("plot");
+  await Plotly.newPlot("plot", fig.data, fig.layout, { responsive: true });
+  if (fig.frames) await Plotly.addFrames("plot", fig.frames);
+}
+
+// One input per parameter, grouped as the script's HELP says.
+function buildForm() {
+  const groups = {};
+  for (const key of Object.keys(DEFAULTS)) {
+    const [group, text] = HELP[key] || ["Parameters", ""];
+    (groups[group] ||= []).push([key, text]);
+  }
+  for (const [group, items] of Object.entries(groups)) {
+    const fs = document.createElement("fieldset");
+    fs.innerHTML = `<legend>${group}</legend>`;
+    for (const [key, text] of items) {
+      const label = document.createElement("label");
+      label.innerHTML = `<span>${key}</span><small>${text}</small><input id="p_${key}" type="text" spellcheck="false" autocomplete="off">`;
+      fs.appendChild(label);
+    }
+    $("fields").appendChild(fs);
+  }
+}
+
+function fillForm(p) {
+  for (const key of Object.keys(DEFAULTS)) $("p_" + key).value = Array.isArray(p[key]) ? p[key].join(", ") : p[key];
+}
+
+// Generic checks only (numbers and lists of numbers). The script itself
+// checks what the values mean and raises a readable error if needed.
+function readForm() {
+  const p = {};
+  for (const key of Object.keys(DEFAULTS)) {
+    const raw = $("p_" + key).value.trim();
+    if (Array.isArray(DEFAULTS[key])) {
+      p[key] = raw.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (!p[key].length || p[key].some((v) => !Number.isFinite(v))) return [null, `${key}: give numbers separated by commas.`];
+    } else {
+      p[key] = Number(raw);
+      if (raw === "" || !Number.isFinite(p[key])) return [null, `${key}: give a number.`];
+    }
+  }
+  return [p, null];
+}
+
+// Python loads once, in the background, as soon as the page opens.
+let pythonReady = null;
+function loadPython() {
+  if (!pythonReady) {
+    pythonReady = (async () => {
+      setStatus("Loading Python…");
+      const py = await loadPyodide();
+      setStatus("Loading numpy, scipy and plotly…");
+      await py.loadPackage(["numpy", "scipy", "micropip"]);
+      await py.pyimport("micropip").install("plotly=={{PLOTLY_VERSION}}");
+      setStatus("Python is ready. Press Run.");
+      return py;
+    })();
+    pythonReady.catch((e) => { pythonReady = null; setStatus("Python could not load: " + e.message, true); });
+  }
+  return pythonReady;
+}
+
+async function run() {
+  const [params, err] = readForm();
+  if (err) return setStatus(err, true);
+  $("runBtn").disabled = true;
+  let out = "", ns = null;
+  try {
+    const py = await loadPython();
+    setStatus("Running…");
+    py.setStdout({ batched: (s) => { out += s + "\n"; } });
+    ns = py.globals.get("dict")();
+    ns.set("WEB_PARAMS", py.toPy(params));
+    const t0 = performance.now();
+    await py.runPythonAsync(SOURCE, { globals: ns });
+    await draw(JSON.parse(ns.get("fig").to_json()));
+    $("log").textContent = out;
+    setStatus(`Done in ${((performance.now() - t0) / 1000).toFixed(1)} s.`);
+  } catch (e) {
+    // Show only the last line of a Python traceback in the status line
+    const lines = e.message.trim().split("\n");
+    $("log").textContent = out + "\n" + e.message;
+    setStatus(lines[lines.length - 1], true);
+  } finally {
+    if (ns) ns.destroy();
+    $("runBtn").disabled = false;
+  }
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); run(); });
+$("resetBtn").addEventListener("click", () => fillForm(DEFAULTS));
+$("source").textContent = SOURCE;
+buildForm();
+fillForm(DEFAULTS);
+draw(INITIAL_FIGURE);
+// Run the defaults once Python is ready, so the run log fills in.
+loadPython().then(run, () => {});
+</script>
+</body>
+</html>
