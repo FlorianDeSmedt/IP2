@@ -14,14 +14,12 @@
 <style>
   :root { --ink: #1b2430; --muted: #5d6b78; --line: #d9e0e6; --bg: #f4f6f8; --accent: #1f77b4; --err: #c0392b; }
   html, body { height: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 Arial, Helvetica, sans-serif; }
   /* One screen: header on top, then parameters | figure | run log */
   .app { height: 100%; box-sizing: border-box; padding: 10px 12px; display: grid; gap: 10px;
          grid-template-columns: 270px minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr); }
   header { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
   h1 { margin: 0; font-size: 18px; }
-  header p { margin: 0; color: var(--muted); font-size: 13px; }
-  code { font: 12px ui-monospace, Menlo, Consolas, monospace; }
   .panel { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-height: 0; box-sizing: border-box; }
   form { display: grid; gap: 10px; align-content: start; overflow-y: auto; }
   #fields { display: grid; gap: 10px; }
@@ -30,19 +28,23 @@
   label { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 0 8px; align-items: center; font-size: 12px; font-weight: 600; }
   label small { grid-column: 1; color: var(--muted); font-weight: 400; font-size: 11px; line-height: 1.2; }
   label input { grid-column: 2; grid-row: 1 / span 2; }
-  input { font: 13px ui-monospace, Menlo, Consolas, monospace; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; min-width: 0; }
+  input { font: 13px Arial, Helvetica, sans-serif; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; min-width: 0; }
   .buttons { display: flex; gap: 8px; }
-  button { font: 600 14px system-ui, sans-serif; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  button { font: bold 14px Arial, Helvetica, sans-serif; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
   button.run { background: var(--accent); border-color: var(--accent); color: #fff; flex: 1; }
   button:disabled { opacity: 0.55; cursor: wait; }
   #status { font-size: 12px; color: var(--muted); min-height: 1.4em; }
   #status.err { color: var(--err); }
   #plot { padding: 4px; overflow: hidden; }
-  .side { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 10px; min-height: 0; }
+  .side { display: grid; grid-template-rows: minmax(0, auto) minmax(110px, 1fr) auto; gap: 10px; min-height: 0; }
+  #guide { overflow-y: auto; font-size: 12px; line-height: 1.4; }
+  #guide ul { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 4px; }
+  #guide p { margin: 6px 0 0; }
+  #guide b { font-weight: bold; }
   .side .panel { display: flex; flex-direction: column; }
   h2, summary { font-size: 13px; font-weight: 600; margin: 0; }
   summary { cursor: pointer; }
-  pre { margin: 6px 0 0; font: 11.5px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow: auto; min-height: 0; }
+  pre { margin: 6px 0 0; font: 12px/1.45 Arial, Helvetica, sans-serif; white-space: pre-wrap; overflow: auto; min-height: 0; }
   #log { flex: 1; }
   #source { max-height: 38vh; }
   /* Too small for one screen: fall back to a normal scrolling page */
@@ -56,7 +58,6 @@
 <div class="app">
   <header>
     <h1>{{TITLE}}</h1>
-    <p>{{INTRO}}</p>
   </header>
 
   <form id="form" class="panel" novalidate>
@@ -71,6 +72,10 @@
   <div id="plot" class="panel"></div>
 
   <div class="side">
+    <section class="panel" id="guide">
+      <h2>How to read the charts</h2>
+      {{GUIDE}}
+    </section>
     <section class="panel">
       <h2>Output of the last run</h2>
       <pre id="log">The run log appears here once Python has loaded (about 5 to 30 seconds) and the default run has finished.</pre>

@@ -380,7 +380,8 @@ step_args = dict(frame=dict(duration=0, redraw=True), mode="immediate")
 fig.update_layout(
     # No fixed height: the web page sizes the figure to fit the screen
     title=dict(text=frame_title(0, states[0]), font=dict(size=14), x=0.06, y=0.985),
-    template="plotly_white", margin=dict(t=62, b=105, l=60, r=10),
+    template="plotly_white", font=dict(family="Arial, Helvetica, sans-serif"),
+    margin=dict(t=62, b=105, l=60, r=10),
     # Iteration controls get their own band below the last chart
     updatemenus=[dict(type="buttons", x=0, y=-0.115, xanchor="left", yanchor="top",
                       direction="left", pad=dict(t=0, r=10),
@@ -401,11 +402,29 @@ fig.update_layout(
 # The page shows the figure above straight away, and its "Run" button
 # re-runs THIS file in the browser (Pyodide) with the parameters from the
 # form. In the browser `fig` is read back by the page instead.
+GUIDE = """
+<ul>
+<li><b>Top chart.</b> The dashed line is the true revenue, which the algorithm
+never sees. The blue line is the GP's best guess, and the shaded band is its
+uncertainty (±2σ): narrow near the evaluations, wide far from them.</li>
+<li><b>Red numbered dots</b> are the runs of the expensive model, in order. The
+green dotted line is the toll the algorithm will try next.</li>
+<li><b>Middle chart.</b> Expected Improvement: how much each toll is expected to
+beat the best revenue so far. Its peak is the next toll to try. EI is high
+where the GP predicts a high revenue (exploitation) or is very unsure
+(exploration); the title splits it into these two parts.</li>
+<li><b>Bottom chart.</b> How far each run is from the true best revenue R*, on a
+log scale. The line is the best result so far.</li>
+<li><b>Converged</b> when EI is close to zero everywhere and the algorithm picks
+(almost) the same toll again: there is nothing left to learn.</li>
+</ul>
+<p>Try a small LENGTH (a wigglier GP that explores more) or a large XI (more
+exploration), then press Run.</p>
+"""
+
 if not IN_BROWSER:
     from webpage import write_page
     write_page(__file__, "toll_bo.html",
                title="Bayesian Optimisation of a single toll",
-               intro="Press <b>Run</b> to re-run <code>toll_bo.py</code> in your browser "
-                     "(Pyodide, no server). Drag the slider under the charts to step "
-                     "through the iterations.",
+               guide=GUIDE,
                params=P, param_help=HELP, fig=fig)

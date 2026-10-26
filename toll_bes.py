@@ -385,7 +385,8 @@ step_args = dict(frame=dict(duration=0, redraw=True), mode="immediate")
 fig.update_layout(
     # No fixed height: the web page sizes the figure to fit the screen
     title=dict(text=frame_title(1), font=dict(size=14), x=0.06, y=0.985),
-    template="plotly_white", margin=dict(t=62, b=105, l=60, r=10),
+    template="plotly_white", font=dict(family="Arial, Helvetica, sans-serif"),
+    margin=dict(t=62, b=105, l=60, r=10),
     legend=dict(font=dict(size=11)),
     updatemenus=[dict(type="buttons", x=0, y=-0.115, xanchor="left", yanchor="top",
                       direction="left", pad=dict(t=0, r=10),
@@ -403,11 +404,32 @@ fig.update_layout(
 # ----------------------------------------------------------------------
 # 6. Web page: toll_bes.html, built around this file's own source
 # ----------------------------------------------------------------------
+GUIDE = """
+<ul>
+<li><b>Heatmaps.</b> Each player's GP estimate of its revenue for every pair of
+tolls (darker = higher). Black dots: model runs so far. Red circles: this
+iteration's 5 check runs.</li>
+<li><b>Best-response curves.</b> Blue: player 1's best τ₁ for each τ₂. Orange:
+player 2's best τ₂ for each τ₁. Solid = from the GPs, dashed = true (BES never
+sees these).</li>
+<li><b>Equilibrium</b> is where the curves cross: no player wants to change its
+toll. Red diamond = BES candidate, green star = exact answer. Over the
+iterations the solid curves move onto the dashed ones.</li>
+<li><b>Roads.</b> Traffic at the candidate tolls (thicker = more vehicles). A
+cheaper road draws traffic from the other, so each best toll depends on the
+other authority's toll.</li>
+<li><b>Distance to exact Nash.</b> Only known because this toy model can be
+solved exactly.</li>
+<li><b>Nudge gains.</b> The most each player wins by moving its own toll ±δ in
+the real model. Both below ε (dotted) = ε-local Nash equilibrium: BES stops.
+Precision is limited by δ, ε and the toll grid, so the candidate can still be
+a few tenths from the exact answer.</li>
+</ul>
+"""
+
 if not IN_BROWSER:
     from webpage import write_page
     write_page(__file__, "toll_bes.html",
                title="Bayesian equilibration: two roads, two toll authorities",
-               intro="Press <b>Run</b> to re-run <code>toll_bes.py</code> in your browser "
-                     "(Pyodide, no server). Drag the slider under the charts to step "
-                     "through the iterations.",
+               guide=GUIDE,
                params=P, param_help=HELP, fig=fig)

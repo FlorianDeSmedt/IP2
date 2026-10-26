@@ -17,7 +17,7 @@ import plotly.offline
 HERE = Path(__file__).resolve().parent
 
 
-def write_page(script, out_name, title, intro, params, param_help, fig):
+def write_page(script, out_name, title, guide, params, param_help, fig):
     """Fill page_template.html and save it next to the script.
 
     Parameters
@@ -25,7 +25,7 @@ def write_page(script, out_name, title, intro, params, param_help, fig):
     script     : path of the script (pass __file__); its source is embedded
     out_name   : file name of the page, e.g. "toll_bo.html"
     title      : page heading
-    intro      : one line of HTML under the heading
+    guide      : HTML explaining how to read the figure (shown beside it)
     params     : dict of default parameters (the form starts with these)
     param_help : dict  name -> (group, short description) for the form
     fig        : the plotly figure to show before the first browser run
@@ -36,7 +36,7 @@ def write_page(script, out_name, title, intro, params, param_help, fig):
 
     page = (HERE / "page_template.html").read_text(encoding="utf-8")
     page = (page.replace("{{TITLE}}", title)
-                .replace("{{INTRO}}", intro)
+                .replace("{{GUIDE}}", guide)
                 .replace("{{PLOTLYJS_VERSION}}", plotly.offline.get_plotlyjs_version())
                 .replace("{{PLOTLY_VERSION}}", plotly.__version__)
                 .replace("{{PARAMS}}", as_js(json.dumps(params)))
