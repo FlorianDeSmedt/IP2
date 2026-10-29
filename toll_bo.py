@@ -261,4 +261,4 @@ for col, k in enumerate(picks):
         ax_ei.set_ylabel("EI")
         ax.legend(fontsize=8, loc="lower center")
 plt.tight_layout()
-plt.savefig("toll_bo.png", dpi=130)
+plt.savefig("vis/toll_bo.png", dpi=130)
