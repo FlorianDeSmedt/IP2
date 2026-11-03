@@ -1,3 +1,5 @@
+#OUTDATED, USE toll_bo.py INSTEAD
+
 """
 Single road, single toll operator: revenue maximisation.
 
@@ -198,7 +200,7 @@ grid = np.linspace(0, TAU_MAX, 501)
  
 # Initial design: BO needs a few evaluations to start. These 3 spread-out
 # tolls are the only "free" information; every later one is chosen by EI.
-x_obs = np.array([1.0, 4.0, 8.0])     # tolls evaluated so far
+x_obs = np.array([0])     # tolls evaluated so far
 y_obs = revenue(x_obs)                # their revenues (3 expensive calls)
 N_ITER = 6                            # number of BO iterations
  

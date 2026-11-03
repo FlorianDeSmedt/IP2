@@ -4,12 +4,15 @@ Single road, single toll operator: revenue maximisation.
 Part 1: exact solution (very doable by hand on paper as well)
 Part 2: Bayesian Optimisation with a hand-written Gaussian Process
 """
+import os
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 import imageio.v2 as imageio
+
+os.makedirs("vis", exist_ok=True)   # output folder for figures and GIF
 
 # ----------------------------------------------------------------------
 # 1. The "expensive model" (here cheap, but we treat it as a black box)
@@ -115,7 +118,9 @@ def gp_posterior(x_train, y_train, x_test, length=2.0, sigma_f=1.0, noise=1e-6):
     # revenues are in the thousands. Rescaling y to zero mean / unit spread
     # makes sigma_f = 1 a sensible choice. We undo this at the very end.
     y_mean = y_train.mean()
-    y_std = y_train.std() + 1e-12          # +1e-12 avoids dividing by zero
+    y_std = y_train.std()
+    if y_std < 1e-8:                       # all revenues equal (or only 1 point):
+        y_std = 1.0                        # no meaningful spread, skip rescaling
     y = (y_train - y_mean) / y_std
  
     # --- Step 2: build the kernel matrices -------------------------------
@@ -199,26 +204,42 @@ grid = np.linspace(0, TAU_MAX, 501)
  
 # Initial design: BO needs a few evaluations to start. These 3 spread-out
 # tolls are the only "free" information; every later one is chosen by EI.
-x_obs = np.array([1.0, 4.0, 8.0])     # tolls evaluated so far
+x_obs = np.array([2.0])   # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! hardcoded??????
 y_obs = revenue(x_obs)                # their revenues (3 expensive calls)
-N_ITER = 6                            # number of BO iterations
- 
+N_ITER = 50                            # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! hardcoded??????
+# Relative stop criterion: stop if EI everywhere is below this fraction of
+# the best revenue seen so far (scale-independent).
+EI_REL_TOL = 1e-6
 snapshots = []   # store each iteration's state, only used for plotting
  
 # --- The BO loop ---------------------------------------------------------
-for it in range(N_ITER):
+for it in range(1, N_ITER + 1):
     # (a) Fit the GP to all data so far and predict on the whole grid.
     #     Cheap: only linear algebra on a tiny matrix.
     mean, std = gp_posterior(x_obs, y_obs, grid)
- 
+
     # (b) Score every candidate toll with EI, relative to the best
     #     revenue observed so far.
     ei = expected_improvement(mean, std, y_obs.max())
- 
+
+    # Stopping criterion: no candidate toll is worth another evaluation.
+    if ei.max() <= EI_REL_TOL * abs(y_obs.max()):
+        print(f"Stopped before iter {it}: max EI = {ei.max():.2e} "
+              f"is below tolerance")
+        break
+
     # (c) Pick the toll with the highest EI: the most promising place
     #     to spend one expensive evaluation.
     x_next = grid[np.argmax(ei)]
- 
+
+    # Second stopping criterion: the model is deterministic, so re-evaluating
+    # a toll we already know gives no new information. EI asking for one
+    # means the GP has converged (the leftover EI is just the noise jitter).
+    if np.any(np.isclose(x_next, x_obs)):
+        print(f"Stopped before iter {it}: EI proposes tau = {x_next:.2f}, "
+              f"which was already evaluated (converged)")
+        break
+
     snapshots.append((x_obs.copy(), y_obs.copy(), mean, std, ei, x_next))
     print(f"iter {it}: evaluate tau = {x_next:.2f}  "
           f"(best so far: tau = {x_obs[np.argmax(y_obs)]:.2f}, "
@@ -236,6 +257,10 @@ print(f"\nBO result: tau = {x_obs[best]:.3f}, R = {y_obs[best]:.1f} "
       f"after {len(x_obs)} evaluations")
 print(f"Exact:     tau = {tau_star:.3f}, R = {revenue(tau_star):.1f}")
  
+if not snapshots:
+    raise SystemExit("BO loop did not run: check the initial design / stopping criterion.")
+n_snap = len(snapshots)
+
 # Why does it stop making progress? Once a point near the optimum is known,
 # the GP is confident nearby and EI is tiny everywhere, so argmax keeps
 # returning (almost) the same toll. Repeated picks signal convergence.
@@ -254,7 +279,7 @@ EI_MAX = max(np.max(snap[4]) for snap in snapshots)
 
 gif_frames = []
 
-for k in range(N_ITER):
+for k in range(n_snap):
 
     xo, yo, m, s, ei, xn = snapshots[k]
 
@@ -357,7 +382,7 @@ imageio.mimsave(
 )
 
 print(
-    f"Saved {N_ITER} iteration figures "
+    f"Saved {n_snap} iteration figures "
     f"and toll_bo_evolution.gif"
 )
 
@@ -365,7 +390,7 @@ print(
 # Original summary figure (first, middle, last iteration)
 # ----------------------------------------------------------------------
 
-picks = [0, N_ITER // 2, N_ITER - 1]
+picks = sorted(set([0, n_snap // 2, n_snap - 1]))
 
 fig, axes = plt.subplots(
     2,
